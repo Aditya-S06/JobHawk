@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { unstable_cache } from "next/cache";
 import type { ApiResult, JobListing, JobSearchResponse } from "@/types";
 import { supabaseServer } from "@/lib/supabase/server";
 import { MissingKeyError, resolveUserKey } from "@/lib/user-keys";
+
+const SEARCH_CACHE_TTL_SECONDS = 1800;
 
 // SerpApi Google Jobs raw shape (only fields we actually consume).
 interface SerpApiApplyOption {
@@ -64,6 +67,41 @@ function pickApplyUrl(job: SerpApiJob): string {
   return direct ?? "";
 }
 
+type SerpApiFetchResult =
+  | { ok: true; payload: SerpApiResponse }
+  | { ok: false; status: number };
+
+/**
+ * Cached SerpApi fetch. Keyed by (apiKey, q, location, nextPageToken) so that
+ * identical searches within the TTL share results and don't burn quota.
+ * apiKey is part of the key so distinct users' quotas stay isolated.
+ */
+const cachedSerpApiFetch = unstable_cache(
+  async (
+    apiKey: string,
+    q: string,
+    location: string,
+    nextPageToken: string | null,
+  ): Promise<SerpApiFetchResult> => {
+    const url = new URL("https://serpapi.com/search.json");
+    url.searchParams.set("engine", "google_jobs");
+    url.searchParams.set("q", q);
+    url.searchParams.set("location", location);
+    url.searchParams.set("hl", "en");
+    url.searchParams.set("api_key", apiKey);
+    if (nextPageToken) {
+      url.searchParams.set("next_page_token", nextPageToken);
+    }
+
+    const res = await fetch(url.toString(), { cache: "no-store" });
+    if (!res.ok) return { ok: false, status: res.status };
+    const payload = (await res.json()) as SerpApiResponse;
+    return { ok: true, payload };
+  },
+  ["jobs-search-v1"],
+  { revalidate: SEARCH_CACHE_TTL_SECONDS },
+);
+
 function cleanJobs(raw: SerpApiJob[], location: string): JobListing[] {
   return raw
     .filter((job) => !isSponsored(job))
@@ -111,25 +149,20 @@ export async function GET(
       );
     }
 
-    const url = new URL("https://serpapi.com/search.json");
-    url.searchParams.set("engine", "google_jobs");
-    url.searchParams.set("q", q);
-    url.searchParams.set("location", location);
-    url.searchParams.set("hl", "en");
-    url.searchParams.set("api_key", apiKey);
-    if (nextPageToken) {
-      url.searchParams.set("next_page_token", nextPageToken);
-    }
-
-    const res = await fetch(url.toString(), { cache: "no-store" });
-    if (!res.ok) {
+    const result = await cachedSerpApiFetch(
+      apiKey,
+      q,
+      location,
+      nextPageToken ?? null,
+    );
+    if (!result.ok) {
       return NextResponse.json(
-        { success: false, error: `SerpApi error: ${res.status}` },
+        { success: false, error: `SerpApi error: ${result.status}` },
         { status: 502 },
       );
     }
 
-    const payload = (await res.json()) as SerpApiResponse;
+    const payload = result.payload;
     const raw = payload.jobs_results ?? [];
     const jobs = cleanJobs(raw, location);
     const next = extractNextPageToken(payload);
