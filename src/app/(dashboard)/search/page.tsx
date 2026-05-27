@@ -15,10 +15,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { ApiResult, JobListing, JobSearchResponse, TrackedJob } from "@/types";
 import {
+  deleteTracked,
   fromJobListing,
   loadTracked,
   mergeSyncedJob,
-  writeTracked,
+  upsertTracked,
 } from "@/lib/saved-jobs";
 import { syncJobToNotionApi } from "@/lib/notion-sync-client";
 
@@ -109,8 +110,10 @@ export default function SearchPage() {
         // ignore corrupt cache
       }
     }
-    setSaved(loadTracked());
-    setHydrated(true);
+    void loadTracked()
+      .then((jobs) => setSaved(jobs))
+      .catch(() => setSaved([]))
+      .finally(() => setHydrated(true));
   }, []);
 
   // Persist whenever any meaningful piece changes, but only after hydration so
@@ -198,30 +201,26 @@ export default function SearchPage() {
     setNotionError(null);
     const exists = saved.some((j) => j.id === job.id);
     if (exists) {
-      const next = saved.filter((j) => j.id !== job.id);
-      writeTracked(next);
-      setSaved(next);
+      setSaved((prev) => prev.filter((j) => j.id !== job.id));
+      void deleteTracked(job.id).catch(() => {
+        // If delete fails, reload to resync UI with server.
+        void loadTracked().then(setSaved).catch(() => undefined);
+      });
       return;
     }
 
     const added = fromJobListing(job);
-    const next = [...saved, added];
-    writeTracked(next);
-    setSaved(next);
-
-    if (added.notionPageId) return;
+    setSaved((prev) => [...prev, added]);
 
     setSyncingIds((ids) => new Set(ids).add(job.id));
-    void syncJobToNotionApi(added)
+    void upsertTracked(added)
+      .then(() => syncJobToNotionApi(added))
+      .then((synced) => upsertTracked(synced))
       .then((synced) => {
-        setSaved((current) => {
-          const merged = mergeSyncedJob(current, synced);
-          writeTracked(merged);
-          return merged;
-        });
+        setSaved((current) => mergeSyncedJob(current, synced));
       })
       .catch((err) => {
-        setNotionError(err instanceof Error ? err.message : "Notion sync failed");
+        setNotionError(err instanceof Error ? err.message : "Save/sync failed");
       })
       .finally(() => {
         setSyncingIds((ids) => {

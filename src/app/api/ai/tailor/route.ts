@@ -2,12 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI, Type } from "@google/genai";
 import type { ApiResult, TailorRequest, TailorResponse } from "@/types";
 import { formatGeminiError } from "@/lib/gemini-errors";
-
-// Per PLAN.md: initialize without explicit project/location/credentials so the
-// SDK falls through to local ADC / GEMINI_API_KEY routing against Google AI
-// Studio. The SDK's constructor requires an options object, but all fields are
-// optional, so `{}` preserves the "empty" intent.
-const ai = new GoogleGenAI({});
+import { supabaseServer } from "@/lib/supabase/server";
+import { MissingKeyError, resolveUserKey } from "@/lib/user-keys";
 
 const SYSTEM_PROMPT = `Act as an elite Silicon Valley Technical Recruiter specializing in software and computer engineering internship roles. Critically analyze the input resume against the job description. Do not fabricate historical facts or experiences under any circumstance.
 
@@ -44,6 +40,17 @@ export async function POST(
   req: NextRequest,
 ): Promise<NextResponse<ApiResult<TailorResponse>>> {
   try {
+    const supabase = await supabaseServer();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: "Not authenticated" },
+        { status: 401 },
+      );
+    }
+
     const body = (await req.json().catch(() => null)) as unknown;
     if (!isTailorRequest(body)) {
       return NextResponse.json(
@@ -59,6 +66,9 @@ export async function POST(
         { status: 400 },
       );
     }
+
+    const apiKey = await resolveUserKey(user.id, "gemini");
+    const ai = new GoogleGenAI({ apiKey });
 
     const userPrompt = `# Candidate Resume\n${resumeText}\n\n# Target Job Description\n${jobDescription}`;
 
@@ -105,6 +115,12 @@ export async function POST(
 
     return NextResponse.json({ success: true, data: result });
   } catch (err) {
+    if (err instanceof MissingKeyError) {
+      return NextResponse.json(
+        { success: false, error: err.message },
+        { status: 400 },
+      );
+    }
     const { message, status } = formatGeminiError(err);
     return NextResponse.json({ success: false, error: message }, { status });
   }

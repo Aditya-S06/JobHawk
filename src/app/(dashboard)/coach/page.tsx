@@ -13,7 +13,6 @@ import { loadTracked } from "@/lib/saved-jobs";
 import { ResumeUpload } from "@/components/resume-upload";
 import {
   loadResume,
-  loadResumeMeta,
   saveResume,
   type ResumeMeta,
 } from "@/lib/resume-storage";
@@ -44,12 +43,15 @@ export default function CoachPage() {
   const [resumeMeta, setResumeMeta] = useState<ResumeMeta>({ source: "markdown" });
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setResumeText(loadResume());
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setResumeMeta(loadResumeMeta());
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setTrackedJobs(loadTracked());
+    void loadResume()
+      .then((r) => {
+        setResumeText(r.rawText);
+        setResumeMeta(r.meta);
+      })
+      .catch(() => undefined);
+    void loadTracked()
+      .then(setTrackedJobs)
+      .catch(() => setTrackedJobs([]));
   }, []);
 
   function handleResumeParsed(markdown: string, fileName: string) {
@@ -60,7 +62,7 @@ export default function CoachPage() {
     };
     setResumeText(markdown);
     setResumeMeta(meta);
-    saveResume(markdown, meta);
+    void saveResume(markdown, meta).catch(() => undefined);
   }
 
   function handleJobSelect(id: string) {

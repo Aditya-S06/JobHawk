@@ -34,9 +34,15 @@ create table if not exists public.jobs (
     url text,
     status text default 'saved' check (status in ('saved', 'tailoring', 'applied', 'interviewing', 'rejected')),
     tailored_resume_text text,
+    notion_page_id text,
+    applied_at date,
     created_at timestamp with time zone default timezone('utc'::text, now()) not null,
     unique(user_id, job_id_external)
 );
+
+-- Backfill columns on pre-existing tables (idempotent).
+alter table public.jobs add column if not exists notion_page_id text;
+alter table public.jobs add column if not exists applied_at date;
 
 -- Enable Row Level Security
 alter table public.profiles enable row level security;
@@ -60,3 +66,40 @@ create policy "Users can manage own resumes"
 
 create policy "Users can manage own jobs"
     on public.jobs for all using (auth.uid() = user_id);
+
+-- 4. Per-user encrypted API keys (BYO-keys for SerpApi / Gemini / Notion)
+create table if not exists public.user_api_keys (
+    user_id uuid references public.profiles(id) on delete cascade not null,
+    provider text not null check (provider in ('serpapi','gemini','notion','notion_data_source')),
+    encrypted_value text not null,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    primary key (user_id, provider)
+);
+
+alter table public.user_api_keys enable row level security;
+
+drop policy if exists "Users manage own keys" on public.user_api_keys;
+create policy "Users manage own keys"
+    on public.user_api_keys for all using (auth.uid() = user_id);
+
+-- Auto-create profiles row when a new auth user signs up. Without this, an
+-- account exists in auth.users but every public.* foreign key against
+-- profiles(id) would fail until we manually inserted a row.
+create or replace function public.handle_new_user()
+returns trigger as $$
+begin
+  insert into public.profiles (id, email, name)
+  values (
+    new.id,
+    new.email,
+    coalesce(new.raw_user_meta_data->>'name', null)
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$ language plpgsql security definer;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.handle_new_user();

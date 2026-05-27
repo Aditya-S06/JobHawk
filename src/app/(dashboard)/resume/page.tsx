@@ -10,7 +10,6 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ResumeUpload } from "@/components/resume-upload";
 import {
   loadResume,
-  loadResumeMeta,
   saveResume,
   clearResume,
   type ResumeMeta,
@@ -23,15 +22,19 @@ export default function ResumePage() {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    setText(loadResume());
-    setMeta(loadResumeMeta());
-    setHydrated(true);
+    void loadResume()
+      .then((r) => {
+        setText(r.rawText);
+        setMeta(r.meta);
+      })
+      .catch(() => undefined)
+      .finally(() => setHydrated(true));
   }, []);
 
   function persist(markdown: string, nextMeta: ResumeMeta) {
     setText(markdown);
     setMeta(nextMeta);
-    saveResume(markdown, nextMeta);
+    void saveResume(markdown, nextMeta).catch(() => undefined);
   }
 
   function handlePdfParsed(markdown: string, fileName: string) {
@@ -45,7 +48,7 @@ export default function ResumePage() {
   }
 
   function handleRemove() {
-    clearResume();
+    void clearResume().catch(() => undefined);
     setText("");
     setMeta({ source: "markdown" });
   }

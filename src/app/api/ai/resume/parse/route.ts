@@ -6,8 +6,8 @@ import {
   isGeminiQuotaError,
   PDF_PARSE_MODELS,
 } from "@/lib/gemini-errors";
-
-const ai = new GoogleGenAI({});
+import { supabaseServer } from "@/lib/supabase/server";
+import { MissingKeyError, resolveUserKey } from "@/lib/user-keys";
 
 const MAX_BYTES = 5 * 1024 * 1024;
 
@@ -16,7 +16,10 @@ Preserve logical sections (e.g. Education, Experience, Skills, Projects).
 Do not invent or add any content that is not in the document.
 Output only the markdown body with no code fences and no preamble.`;
 
-async function extractMarkdownFromPdf(base64: string): Promise<string> {
+async function extractMarkdownFromPdf(
+  ai: GoogleGenAI,
+  base64: string,
+): Promise<string> {
   let lastError: unknown;
 
   for (const model of PDF_PARSE_MODELS) {
@@ -59,6 +62,17 @@ export async function POST(
   req: NextRequest,
 ): Promise<NextResponse<ApiResult<ResumeParseResponse>>> {
   try {
+    const supabase = await supabaseServer();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: "Not authenticated" },
+        { status: 401 },
+      );
+    }
+
     const formData = await req.formData();
     const file = formData.get("file");
 
@@ -86,7 +100,10 @@ export async function POST(
     const buffer = Buffer.from(await file.arrayBuffer());
     const base64 = buffer.toString("base64");
 
-    const markdown = await extractMarkdownFromPdf(base64);
+    const apiKey = await resolveUserKey(user.id, "gemini");
+    const ai = new GoogleGenAI({ apiKey });
+
+    const markdown = await extractMarkdownFromPdf(ai, base64);
 
     if (!markdown) {
       return NextResponse.json(
@@ -107,6 +124,12 @@ export async function POST(
       },
     });
   } catch (err) {
+    if (err instanceof MissingKeyError) {
+      return NextResponse.json(
+        { success: false, error: err.message },
+        { status: 400 },
+      );
+    }
     const { message, status } = formatGeminiError(err);
     return NextResponse.json({ success: false, error: message }, { status });
   }

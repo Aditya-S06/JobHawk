@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { ApiResult, JobListing, JobSearchResponse } from "@/types";
+import { supabaseServer } from "@/lib/supabase/server";
+import { MissingKeyError, resolveUserKey } from "@/lib/user-keys";
 
 // SerpApi Google Jobs raw shape (only fields we actually consume).
 interface SerpApiApplyOption {
@@ -84,13 +86,18 @@ export async function GET(
   req: NextRequest,
 ): Promise<NextResponse<ApiResult<JobSearchResponse>>> {
   try {
-    const apiKey = process.env.SERPAPI_API_KEY;
-    if (!apiKey) {
+    const supabase = await supabaseServer();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
       return NextResponse.json(
-        { success: false, error: "SERPAPI_API_KEY not configured" },
-        { status: 500 },
+        { success: false, error: "Not authenticated" },
+        { status: 401 },
       );
     }
+
+    const apiKey = await resolveUserKey(user.id, "serpapi");
 
     const { searchParams } = req.nextUrl;
     const q = searchParams.get("q")?.trim();
@@ -132,6 +139,12 @@ export async function GET(
       data: { jobs, nextPageToken: next },
     });
   } catch (err) {
+    if (err instanceof MissingKeyError) {
+      return NextResponse.json(
+        { success: false, error: err.message },
+        { status: 400 },
+      );
+    }
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(
       { success: false, error: message },

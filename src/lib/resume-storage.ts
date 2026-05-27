@@ -1,44 +1,82 @@
-export type ResumeSource = "markdown" | "pdf";
+import type { ApiResult } from "@/types";
+import {
+  DEFAULT_META,
+  type ResumeMeta,
+  type ResumeSource,
+} from "@/lib/resume-storage-types";
 
-export interface ResumeMeta {
-  source: ResumeSource;
-  fileName?: string;
-  uploadedAt?: string;
-}
+export type { ResumeMeta, ResumeSource };
 
 export const RESUME_MARKDOWN_KEY = "jobhawk:resume";
 export const RESUME_META_KEY = "jobhawk:resume-meta";
+const LEGACY_RESUME_KEYS = ["jobhawk:resume", "vibejob:resume"] as const;
+const LEGACY_RESUME_META_KEYS = [
+  "jobhawk:resume-meta",
+  "vibejob:resume-meta",
+] as const;
 
-const DEFAULT_META: ResumeMeta = { source: "markdown" };
-
-export function loadResume(): string {
-  if (typeof window === "undefined") return "";
-  return window.localStorage.getItem(RESUME_MARKDOWN_KEY) ?? "";
+interface ResumePayload {
+  rawText: string;
+  meta: ResumeMeta;
 }
 
-export function loadResumeMeta(): ResumeMeta {
-  if (typeof window === "undefined") return DEFAULT_META;
-  const raw = window.localStorage.getItem(RESUME_META_KEY);
-  if (!raw) {
-    return DEFAULT_META;
+/** Read the current user's resume from the server. */
+export async function loadResume(): Promise<ResumePayload> {
+  const res = await fetch("/api/resume", { cache: "no-store" });
+  const json = (await res.json()) as ApiResult<ResumePayload>;
+  if (!json.success) {
+    throw new Error(json.error);
   }
-  try {
-    return { ...DEFAULT_META, ...(JSON.parse(raw) as ResumeMeta) };
-  } catch {
-    return DEFAULT_META;
+  return {
+    rawText: json.data.rawText ?? "",
+    meta: { ...DEFAULT_META, ...(json.data.meta ?? {}) },
+  };
+}
+
+export async function saveResume(rawText: string, meta: ResumeMeta): Promise<void> {
+  const res = await fetch("/api/resume", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rawText, meta }),
+  });
+  const json = (await res.json()) as ApiResult<unknown>;
+  if (!json.success) {
+    throw new Error(json.error);
   }
 }
 
-export function saveResume(markdown: string, meta?: ResumeMeta): void {
+export async function clearResume(): Promise<void> {
+  await saveResume("", { source: "markdown" });
+}
+
+/** Read whatever a previous localStorage-backed implementation wrote, under
+ * either the current `jobhawk:` prefix or the older `vibejob:` prefix. */
+export function readLegacyLocalResume(): ResumePayload | null {
+  if (typeof window === "undefined") return null;
+  let text: string | null = null;
+  for (const key of LEGACY_RESUME_KEYS) {
+    text = window.localStorage.getItem(key);
+    if (text !== null) break;
+  }
+  if (text === null) return null;
+  let metaRaw: string | null = null;
+  for (const key of LEGACY_RESUME_META_KEYS) {
+    metaRaw = window.localStorage.getItem(key);
+    if (metaRaw !== null) break;
+  }
+  let meta: ResumeMeta = { ...DEFAULT_META };
+  if (metaRaw) {
+    try {
+      meta = { ...DEFAULT_META, ...(JSON.parse(metaRaw) as ResumeMeta) };
+    } catch {
+      // ignore
+    }
+  }
+  return { rawText: text, meta };
+}
+
+export function clearLegacyLocalResume(): void {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(RESUME_MARKDOWN_KEY, markdown);
-  if (meta) {
-    window.localStorage.setItem(RESUME_META_KEY, JSON.stringify(meta));
-  }
-}
-
-export function clearResume(): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(RESUME_MARKDOWN_KEY);
-  window.localStorage.removeItem(RESUME_META_KEY);
+  for (const key of LEGACY_RESUME_KEYS) window.localStorage.removeItem(key);
+  for (const key of LEGACY_RESUME_META_KEYS) window.localStorage.removeItem(key);
 }

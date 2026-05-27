@@ -46,13 +46,24 @@ cp .env.example .env.local
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `SERPAPI_API_KEY` | Yes (search) | Google Jobs search |
-| `GEMINI_API_KEY` | Yes (AI coach) | Resume tailoring |
-| `NEXT_PUBLIC_SUPABASE_URL` | Later | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Later | Supabase anon key |
-| `SUPABASE_SERVICE_ROLE_KEY` | Later | Server-side Supabase (keep secret) |
-| `NOTION_TOKEN` | Optional | Notion integration |
-| `NOTION_DATA_SOURCE_ID` | Optional | Notion job table data source |
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anon key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Yes | Server-side Supabase (keep secret) |
+| `ENCRYPTION_KEY` | Yes | 32-byte hex key used to encrypt per-user API keys |
+| `OWNER_EMAIL` | Yes | Email that falls back to the env keys below |
+| `SERPAPI_API_KEY` | Owner only | Google Jobs search (owner fallback) |
+| `GEMINI_API_KEY` | Owner only | Resume tailoring (owner fallback) |
+| `NOTION_TOKEN` | Optional | Notion integration (owner fallback) |
+| `NOTION_DATA_SOURCE_ID` | Optional | Notion job table data source (owner fallback) |
+
+Generate `ENCRYPTION_KEY` once and back it up:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Other accounts (anyone who isn't `OWNER_EMAIL`) bring their own keys via the
+in-app **Settings** page; values are encrypted at rest with `ENCRYPTION_KEY`.
 
 Never commit `.env.local` or real API keys. Only `.env.example` belongs in git.
 
@@ -64,9 +75,14 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) — you will land on **Search Jobs**.
 
-### 4. Supabase (optional, for persistence)
+### 4. Supabase (required: auth + per-user data)
 
-Run the SQL in [`supabase/schema.sql`](supabase/schema.sql) in your Supabase project’s SQL Editor. This creates `profiles`, `resumes`, and `jobs` tables with Row Level Security. Frontend auth wiring is planned for a later phase; the app currently uses `localStorage` for resume, search cache, and saved jobs.
+1. Run the SQL in [`supabase/schema.sql`](supabase/schema.sql) in your Supabase project's SQL Editor. This creates `profiles`, `resumes`, `jobs`, and `user_api_keys` tables with Row Level Security, plus a trigger that auto-creates a profile row on signup.
+2. **Authentication → Providers**: confirm Email is enabled.
+3. **Authentication → Settings**: for local dev, turn off "Confirm email" so you can sign up without SMTP. Re-enable before any real deployment.
+4. Sign up at [http://localhost:3000/signup](http://localhost:3000/signup) using `OWNER_EMAIL`.
+
+Resume markdown and tracked jobs are stored in Supabase per user. The SerpApi search-result cache stays in `localStorage` to save quota across tab switches.
 
 ### 5. Notion (optional)
 

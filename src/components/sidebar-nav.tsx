@@ -2,17 +2,25 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Briefcase, FileText, Sparkles, KanbanSquare } from "lucide-react";
+import {
+  Briefcase,
+  FileText,
+  Sparkles,
+  KanbanSquare,
+  Settings,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
+import { UserMenu } from "@/components/user-menu";
 
 const NAV = [
   { href: "/search", label: "Search Jobs", icon: Briefcase },
   { href: "/resume", label: "My Resume", icon: FileText },
   { href: "/coach", label: "AI Coach Workspace", icon: Sparkles },
   { href: "/tracker", label: "Application Tracker", icon: KanbanSquare },
+  { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
-export function SidebarNav() {
+export function SidebarNav({ userEmail }: { userEmail: string | null }) {
   const pathname = usePathname();
 
   return (
@@ -48,8 +56,8 @@ export function SidebarNav() {
           );
         })}
       </nav>
-      <div className="p-4 text-xs text-muted-foreground border-t">
-        UCSC · CE · Internship Hunt
+      <div className="p-3 border-t">
+        <UserMenu email={userEmail} />
       </div>
     </aside>
   );

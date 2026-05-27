@@ -7,10 +7,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { JobStatus, TrackedJob } from "@/types";
 import {
+  deleteTracked,
   loadTracked,
   mergeSyncedJob,
+  upsertTracked,
   withStatus,
-  writeTracked,
 } from "@/lib/saved-jobs";
 import {
   syncAllJobsToNotionApi,
@@ -32,24 +33,24 @@ export default function TrackerPage() {
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setJobs(loadTracked());
+    void loadTracked()
+      .then(setJobs)
+      .catch(() => setJobs([]));
   }, []);
 
   async function persistAndSync(
     updated: TrackedJob[],
     changed: TrackedJob,
   ): Promise<void> {
-    writeTracked(updated);
     setJobs(updated);
     setSyncError(null);
     try {
+      await upsertTracked(changed);
       const synced = await syncJobToNotionApi(changed);
-      const merged = mergeSyncedJob(updated, synced);
-      writeTracked(merged);
-      setJobs(merged);
+      const persisted = await upsertTracked(synced);
+      setJobs((prev) => mergeSyncedJob(prev, persisted));
     } catch (err) {
-      setSyncError(err instanceof Error ? err.message : "Notion sync failed");
+      setSyncError(err instanceof Error ? err.message : "Sync failed");
     }
   }
 
@@ -62,10 +63,10 @@ export default function TrackerPage() {
   }
 
   function remove(id: string) {
-    setJobs((prev) => {
-      const updated = prev.filter((j) => j.id !== id);
-      writeTracked(updated);
-      return updated;
+    setJobs((prev) => prev.filter((j) => j.id !== id));
+    void deleteTracked(id).catch((err) => {
+      setSyncError(err instanceof Error ? err.message : "Delete failed");
+      void loadTracked().then(setJobs).catch(() => undefined);
     });
   }
 
@@ -74,13 +75,14 @@ export default function TrackerPage() {
     setSyncError(null);
     setSyncMessage(null);
     try {
-      const current = loadTracked();
+      const current = await loadTracked();
       if (current.length === 0) {
         setSyncMessage("No jobs to sync.");
         return;
       }
       const synced = await syncAllJobsToNotionApi(current);
-      writeTracked(synced);
+      // Persist Notion page IDs back to Supabase.
+      await Promise.all(synced.map((j) => upsertTracked(j)));
       setJobs(synced);
       setSyncMessage(`Synced ${synced.length} job${synced.length === 1 ? "" : "s"} to Notion.`);
     } catch (err) {

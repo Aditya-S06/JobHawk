@@ -2,6 +2,11 @@ import { Client, type CreatePageParameters, type UpdatePageParameters } from "@n
 import type { JobStatus, TrackedJob } from "@/types";
 import { needsAppliedAt, todayIsoDate } from "@/lib/tracked-job-utils";
 
+export interface NotionCredentials {
+  token: string;
+  dataSourceId: string;
+}
+
 function normalizeNotionId(id: string): string {
   const trimmed = id.trim().replace(/^["']|["']$/g, "");
   const clean = trimmed.replace(/-/g, "");
@@ -17,38 +22,15 @@ const PROGRESS_LABELS: Record<JobStatus, string> = {
   rejected: "Rejected",
 };
 
-function getNotionConfig() {
-  const token = process.env.NOTION_TOKEN;
-  const dataSourceId =
-    process.env.NOTION_DATA_SOURCE_ID ?? process.env.NOTION_DATABASE_ID;
-  if (!token) {
-    throw new Error("NOTION_TOKEN must be set in .env.local");
-  }
-  if (!dataSourceId) {
-    throw new Error(
-      "Set NOTION_DATA_SOURCE_ID in .env.local to your job table's data source ID",
-    );
-  }
-  return {
-    token,
-    dataSourceId: normalizeNotionId(dataSourceId),
-  };
-}
+const validatedDataSourceIds = new Set<string>();
 
-function notionClient(): Client {
-  return new Client({ auth: getNotionConfig().token });
-}
-
-let validatedDataSourceId: string | null = null;
-
-/** Resolve and validate NOTION_DATA_SOURCE_ID once per process. */
-async function getDataSourceId(notion: Client): Promise<string> {
-  if (validatedDataSourceId) return validatedDataSourceId;
-
-  const { dataSourceId } = getNotionConfig();
+async function ensureDataSource(
+  notion: Client,
+  dataSourceId: string,
+): Promise<void> {
+  if (validatedDataSourceIds.has(dataSourceId)) return;
   await notion.dataSources.retrieve({ data_source_id: dataSourceId });
-  validatedDataSourceId = dataSourceId;
-  return dataSourceId;
+  validatedDataSourceIds.add(dataSourceId);
 }
 
 function buildProperties(job: TrackedJob): CreatePageParameters["properties"] {
@@ -102,9 +84,14 @@ async function findPageByJobHawkId(
 
 const inFlightByJobId = new Map<string, Promise<TrackedJob>>();
 
-async function syncJobToNotionOnce(job: TrackedJob): Promise<TrackedJob> {
-  const notion = notionClient();
-  const dataSourceId = await getDataSourceId(notion);
+async function syncJobToNotionOnce(
+  creds: NotionCredentials,
+  job: TrackedJob,
+): Promise<TrackedJob> {
+  const notion = new Client({ auth: creds.token });
+  const dataSourceId = normalizeNotionId(creds.dataSourceId);
+  await ensureDataSource(notion, dataSourceId);
+
   const properties = buildProperties(job);
 
   const appliedAt =
@@ -136,21 +123,27 @@ async function syncJobToNotionOnce(job: TrackedJob): Promise<TrackedJob> {
   };
 }
 
-export function syncJobToNotion(job: TrackedJob): Promise<TrackedJob> {
+export function syncJobToNotion(
+  creds: NotionCredentials,
+  job: TrackedJob,
+): Promise<TrackedJob> {
   const pending = inFlightByJobId.get(job.id);
   if (pending) return pending;
 
-  const work = syncJobToNotionOnce(job).finally(() => {
+  const work = syncJobToNotionOnce(creds, job).finally(() => {
     inFlightByJobId.delete(job.id);
   });
   inFlightByJobId.set(job.id, work);
   return work;
 }
 
-export async function syncJobsToNotion(jobs: TrackedJob[]): Promise<TrackedJob[]> {
+export async function syncJobsToNotion(
+  creds: NotionCredentials,
+  jobs: TrackedJob[],
+): Promise<TrackedJob[]> {
   const results: TrackedJob[] = [];
   for (const job of jobs) {
-    results.push(await syncJobToNotion(job));
+    results.push(await syncJobToNotion(creds, job));
   }
   return results;
 }
