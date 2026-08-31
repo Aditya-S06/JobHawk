@@ -78,15 +78,20 @@ create table if not exists public.user_api_keys (
 
 alter table public.user_api_keys enable row level security;
 
+-- Ciphertext is read/written only via the service-role server client after
+-- getUser(). No policies for anon/authenticated — fail closed. Service role
+-- bypasses RLS. Drop any leftover "Users manage own keys" policy on existing DBs.
 drop policy if exists "Users manage own keys" on public.user_api_keys;
-create policy "Users manage own keys"
-    on public.user_api_keys for all using (auth.uid() = user_id);
 
 -- Auto-create profiles row when a new auth user signs up. Without this, an
 -- account exists in auth.users but every public.* foreign key against
 -- profiles(id) would fail until we manually inserted a row.
 create or replace function public.handle_new_user()
-returns trigger as $$
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
 begin
   insert into public.profiles (id, email, name)
   values (
@@ -97,7 +102,7 @@ begin
   on conflict (id) do nothing;
   return new;
 end;
-$$ language plpgsql security definer;
+$$;
 
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created

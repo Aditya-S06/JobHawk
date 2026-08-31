@@ -4,6 +4,7 @@ import type { ApiResult, TailorRequest, TailorResponse } from "@/types";
 import { formatGeminiError } from "@/lib/gemini-errors";
 import { supabaseServer } from "@/lib/supabase/server";
 import { MissingKeyError, resolveUserKey } from "@/lib/user-keys";
+import { allowRequest } from "@/lib/rate-limit";
 
 const SYSTEM_PROMPT = `Act as an elite Silicon Valley Technical Recruiter specializing in software and computer engineering internship roles. Critically analyze the input resume against the job description. Do not fabricate historical facts or experiences under any circumstance.
 
@@ -51,6 +52,13 @@ export async function POST(
       );
     }
 
+    if (!allowRequest(`ai-tailor:${user.id}`, 10, 60_000)) {
+      return NextResponse.json(
+        { success: false, error: "Too many requests" },
+        { status: 429 },
+      );
+    }
+
     const body = (await req.json().catch(() => null)) as unknown;
     if (!isTailorRequest(body)) {
       return NextResponse.json(
@@ -67,7 +75,7 @@ export async function POST(
       );
     }
 
-    const apiKey = await resolveUserKey(user.id, "gemini");
+    const apiKey = await resolveUserKey(user, "gemini");
     const ai = new GoogleGenAI({ apiKey });
 
     const userPrompt = `# Candidate Resume\n${resumeText}\n\n# Target Job Description\n${jobDescription}`;

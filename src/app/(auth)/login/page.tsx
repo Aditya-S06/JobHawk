@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabaseBrowser } from "@/lib/supabase/client";
+import { safeRedirectPath } from "@/lib/safe-redirect";
 
 export default function LoginPage() {
   return (
@@ -21,7 +22,7 @@ export default function LoginPage() {
 function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
-  const next = params.get("next") || "/search";
+  const next = safeRedirectPath(params.get("next"));
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -38,7 +39,7 @@ function LoginForm() {
       password,
     });
     if (signInError) {
-      setError(signInError.message);
+      setError("Could not sign in. Check your email and password, or try again later.");
       setLoading(false);
       return;
     }
@@ -87,6 +88,15 @@ function LoginForm() {
             No account?{" "}
             <Link href="/signup" className="text-primary hover:underline">
               Create one
+            </Link>
+          </p>
+          <p className="text-xs text-center text-muted-foreground">
+            <Link href="/privacy" className="text-primary hover:underline">
+              Privacy
+            </Link>
+            {" · "}
+            <Link href="/terms" className="text-primary hover:underline">
+              Terms
             </Link>
           </p>
         </form>

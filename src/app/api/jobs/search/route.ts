@@ -1,8 +1,9 @@
+import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { unstable_cache } from "next/cache";
 import type { ApiResult, JobListing, JobSearchResponse } from "@/types";
 import { supabaseServer } from "@/lib/supabase/server";
 import { MissingKeyError, resolveUserKey } from "@/lib/user-keys";
+import { allowRequest } from "@/lib/rate-limit";
 
 const SEARCH_CACHE_TTL_SECONDS = 1800;
 
@@ -71,36 +72,58 @@ type SerpApiFetchResult =
   | { ok: true; payload: SerpApiResponse }
   | { ok: false; status: number };
 
-/**
- * Cached SerpApi fetch. Keyed by (apiKey, q, location, nextPageToken) so that
- * identical searches within the TTL share results and don't burn quota.
- * apiKey is part of the key so distinct users' quotas stay isolated.
- */
-const cachedSerpApiFetch = unstable_cache(
-  async (
-    apiKey: string,
-    q: string,
-    location: string,
-    nextPageToken: string | null,
-  ): Promise<SerpApiFetchResult> => {
-    const url = new URL("https://serpapi.com/search.json");
-    url.searchParams.set("engine", "google_jobs");
-    url.searchParams.set("q", q);
-    url.searchParams.set("location", location);
-    url.searchParams.set("hl", "en");
-    url.searchParams.set("api_key", apiKey);
-    if (nextPageToken) {
-      url.searchParams.set("next_page_token", nextPageToken);
-    }
+function hashApiKey(apiKey: string): string {
+  return createHash("sha256").update(apiKey).digest("hex");
+}
 
-    const res = await fetch(url.toString(), { cache: "no-store" });
-    if (!res.ok) return { ok: false, status: res.status };
-    const payload = (await res.json()) as SerpApiResponse;
-    return { ok: true, payload };
-  },
-  ["jobs-search-v1"],
-  { revalidate: SEARCH_CACHE_TTL_SECONDS },
-);
+type CacheEntry = { exp: number; value: SerpApiFetchResult };
+const searchCache = new Map<string, CacheEntry>();
+
+async function fetchSerpApi(
+  apiKey: string,
+  q: string,
+  location: string,
+  nextPageToken: string | null,
+): Promise<SerpApiFetchResult> {
+  const url = new URL("https://serpapi.com/search.json");
+  url.searchParams.set("engine", "google_jobs");
+  url.searchParams.set("q", q);
+  url.searchParams.set("location", location);
+  url.searchParams.set("hl", "en");
+  url.searchParams.set("api_key", apiKey);
+  if (nextPageToken) {
+    url.searchParams.set("next_page_token", nextPageToken);
+  }
+
+  const res = await fetch(url.toString(), { cache: "no-store" });
+  if (!res.ok) return { ok: false, status: res.status };
+  const payload = (await res.json()) as SerpApiResponse;
+  return { ok: true, payload };
+}
+
+/** Per-instance TTL cache keyed by sha256(apiKey), not the raw secret. */
+async function cachedSerpApiFetch(
+  apiKey: string,
+  q: string,
+  location: string,
+  nextPageToken: string | null,
+): Promise<SerpApiFetchResult> {
+  const cacheKey = [
+    hashApiKey(apiKey),
+    q,
+    location,
+    nextPageToken ?? "",
+  ].join("\0");
+  const hit = searchCache.get(cacheKey);
+  if (hit && hit.exp > Date.now()) return hit.value;
+
+  const value = await fetchSerpApi(apiKey, q, location, nextPageToken);
+  searchCache.set(cacheKey, {
+    exp: Date.now() + SEARCH_CACHE_TTL_SECONDS * 1000,
+    value,
+  });
+  return value;
+}
 
 function cleanJobs(raw: SerpApiJob[], location: string): JobListing[] {
   return raw
@@ -135,7 +158,14 @@ export async function GET(
       );
     }
 
-    const apiKey = await resolveUserKey(user.id, "serpapi");
+    if (!allowRequest(`jobs-search:${user.id}`, 30, 60_000)) {
+      return NextResponse.json(
+        { success: false, error: "Too many requests" },
+        { status: 429 },
+      );
+    }
+
+    const apiKey = await resolveUserKey(user, "serpapi");
 
     const { searchParams } = req.nextUrl;
     const q = searchParams.get("q")?.trim();
@@ -178,9 +208,8 @@ export async function GET(
         { status: 400 },
       );
     }
-    const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(
-      { success: false, error: message },
+      { success: false, error: "Search failed" },
       { status: 500 },
     );
   }

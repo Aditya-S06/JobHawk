@@ -1,7 +1,11 @@
+import "server-only";
+
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { decryptSecret } from "@/lib/crypto";
 
 export type KeyProvider = "serpapi" | "gemini" | "notion" | "notion_data_source";
+
+export type KeyUser = { id: string; email?: string | null };
 
 export const PROVIDER_LABELS: Record<KeyProvider, string> = {
   serpapi: "SerpApi",
@@ -28,26 +32,17 @@ export class MissingKeyError extends Error {
   }
 }
 
-interface ProfileRow {
-  email: string | null;
+function isOwnerAccount(email: string | null | undefined): boolean {
+  const ownerEmail = process.env.OWNER_EMAIL?.trim().toLowerCase();
+  if (!ownerEmail || !email) return false;
+  return email.trim().toLowerCase() === ownerEmail;
 }
 
-async function getOwnerFallback(
-  userId: string,
+function getOwnerFallback(
+  user: KeyUser,
   provider: KeyProvider,
-): Promise<string | null> {
-  const ownerEmail = process.env.OWNER_EMAIL?.trim().toLowerCase();
-  if (!ownerEmail) return null;
-
-  const admin = supabaseAdmin();
-  const { data } = await admin
-    .from("profiles")
-    .select("email")
-    .eq("id", userId)
-    .maybeSingle<ProfileRow>();
-
-  const email = data?.email?.trim().toLowerCase();
-  if (!email || email !== ownerEmail) return null;
+): string | null {
+  if (!isOwnerAccount(user.email)) return null;
 
   // Legacy fallback: if NOTION_DATA_SOURCE_ID is empty, fall back to
   // NOTION_DATABASE_ID (matches the existing notion-jobs.ts behavior).
@@ -63,26 +58,32 @@ async function getOwnerFallback(
 /**
  * Returns the user's API key for the given provider.
  * 1. Checks the user_api_keys table (decrypts).
- * 2. If missing AND user.email === OWNER_EMAIL, falls back to .env.local.
+ * 2. If missing AND session email === OWNER_EMAIL, falls back to env keys.
  * 3. Otherwise throws MissingKeyError.
+ *
+ * Owner check uses auth identity (getUser().email), not profiles.email.
  */
 export async function resolveUserKey(
-  userId: string,
+  user: KeyUser,
   provider: KeyProvider,
 ): Promise<string> {
   const admin = supabaseAdmin();
   const { data } = await admin
     .from("user_api_keys")
     .select("encrypted_value")
-    .eq("user_id", userId)
+    .eq("user_id", user.id)
     .eq("provider", provider)
     .maybeSingle<{ encrypted_value: string }>();
 
   if (data?.encrypted_value) {
-    return decryptSecret(data.encrypted_value);
+    try {
+      return decryptSecret(data.encrypted_value);
+    } catch {
+      throw new Error("Failed to read stored key");
+    }
   }
 
-  const fallback = await getOwnerFallback(userId, provider);
+  const fallback = getOwnerFallback(user, provider);
   if (fallback) return fallback;
 
   throw new MissingKeyError(provider);
@@ -90,13 +91,13 @@ export async function resolveUserKey(
 
 /** Returns a map of which providers have a key set for this user (incl. owner fallback). */
 export async function listUserKeyStatus(
-  userId: string,
+  user: KeyUser,
 ): Promise<Record<KeyProvider, boolean>> {
   const admin = supabaseAdmin();
   const { data } = await admin
     .from("user_api_keys")
     .select("provider")
-    .eq("user_id", userId);
+    .eq("user_id", user.id);
 
   const set = new Set((data ?? []).map((r) => r.provider as KeyProvider));
   const result: Record<KeyProvider, boolean> = {
@@ -106,11 +107,9 @@ export async function listUserKeyStatus(
     notion_data_source: set.has("notion_data_source"),
   };
 
-  // Mark as "set" if owner fallback would resolve.
   for (const provider of Object.keys(result) as KeyProvider[]) {
     if (result[provider]) continue;
-    const fallback = await getOwnerFallback(userId, provider);
-    if (fallback) result[provider] = true;
+    if (getOwnerFallback(user, provider)) result[provider] = true;
   }
 
   return result;

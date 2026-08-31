@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
+import { safeRedirectPath } from "@/lib/safe-redirect";
 
 /**
  * Supabase email-confirmation callback. Exchanges the `code` query param for a
@@ -8,7 +9,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 export async function GET(req: NextRequest) {
   const { searchParams, origin } = req.nextUrl;
   const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/search";
+  const next = safeRedirectPath(searchParams.get("next"));
 
   if (code) {
     const supabase = await supabaseServer();

@@ -1,3 +1,5 @@
+import { SiteFooter } from "@/components/site-footer";
+
 export default function AuthLayout({
   children,
 }: {
@@ -16,6 +18,7 @@ export default function AuthLayout({
           </div>
         </div>
         {children}
+        <SiteFooter />
       </div>
     </div>
   );

@@ -49,8 +49,10 @@ Desktop.ini
 *.swo
 *~
 
-# Cursor (local agent state; keep shared rules in repo root if needed)
-.cursor/
+# Cursor local agent state; keep shared rules committable
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
 
 # Certificates / keys
 *.pem

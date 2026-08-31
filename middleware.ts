@@ -1,17 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
-
-const PUBLIC_PATH_PREFIXES = [
-  "/login",
-  "/signup",
-  "/auth/callback",
-  "/api/auth",
-];
-
-function isPublicPath(pathname: string): boolean {
-  if (pathname === "/") return true;
-  return PUBLIC_PATH_PREFIXES.some((p) => pathname.startsWith(p));
-}
+import { sessionGate } from "@/lib/auth-paths";
+import { safeRedirectPath } from "@/lib/safe-redirect";
+import { getSupabaseCookieOptions } from "@/lib/supabase/cookie-options";
 
 export async function middleware(req: NextRequest) {
   let response = NextResponse.next({ request: req });
@@ -20,6 +11,7 @@ export async function middleware(req: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      cookieOptions: getSupabaseCookieOptions(),
       cookies: {
         getAll() {
           return req.cookies.getAll();
@@ -42,15 +34,16 @@ export async function middleware(req: NextRequest) {
   } = await supabase.auth.getUser();
 
   const { pathname } = req.nextUrl;
+  const gate = sessionGate(user, pathname);
 
-  if (!user && !isPublicPath(pathname)) {
+  if (gate.kind === "login") {
     const url = req.nextUrl.clone();
     url.pathname = "/login";
-    url.searchParams.set("next", pathname);
+    url.searchParams.set("next", safeRedirectPath(gate.next));
     return NextResponse.redirect(url);
   }
 
-  if (user && (pathname === "/login" || pathname === "/signup")) {
+  if (gate.kind === "search") {
     const url = req.nextUrl.clone();
     url.pathname = "/search";
     url.search = "";

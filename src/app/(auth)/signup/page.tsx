@@ -35,7 +35,9 @@ export default function SignupPage() {
       },
     });
     if (signUpError) {
-      setError(signUpError.message);
+      setError(
+        "Could not create the account. Try signing in, or try again later.",
+      );
       setLoading(false);
       return;
     }
@@ -107,6 +109,17 @@ export default function SignupPage() {
             <Link href="/login" className="text-primary hover:underline">
               Sign in
             </Link>
+          </p>
+          <p className="text-xs text-center text-muted-foreground">
+            By creating an account you agree to the{" "}
+            <Link href="/terms" className="text-primary hover:underline">
+              Terms
+            </Link>{" "}
+            and{" "}
+            <Link href="/privacy" className="text-primary hover:underline">
+              Privacy Policy
+            </Link>
+            .
           </p>
         </form>
       </CardContent>

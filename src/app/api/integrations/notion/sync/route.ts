@@ -3,6 +3,7 @@ import type { TrackedJob } from "@/types";
 import { syncJobToNotion, syncJobsToNotion } from "@/lib/notion-jobs";
 import { supabaseServer } from "@/lib/supabase/server";
 import { MissingKeyError, resolveUserKey } from "@/lib/user-keys";
+import { allowRequest } from "@/lib/rate-limit";
 
 export async function POST(request: Request) {
   try {
@@ -17,9 +18,16 @@ export async function POST(request: Request) {
       );
     }
 
+    if (!allowRequest(`notion-sync:${user.id}`, 10, 60_000)) {
+      return NextResponse.json(
+        { success: false, error: "Too many requests" },
+        { status: 429 },
+      );
+    }
+
     const [token, dataSourceId] = await Promise.all([
-      resolveUserKey(user.id, "notion"),
-      resolveUserKey(user.id, "notion_data_source"),
+      resolveUserKey(user, "notion"),
+      resolveUserKey(user, "notion_data_source"),
     ]);
     const creds = { token, dataSourceId };
 
@@ -52,7 +60,9 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    const message = err instanceof Error ? err.message : "Notion sync failed";
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return NextResponse.json(
+      { success: false, error: "Notion sync failed" },
+      { status: 500 },
+    );
   }
 }

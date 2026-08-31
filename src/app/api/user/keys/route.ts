@@ -5,6 +5,7 @@ import { encryptSecret } from "@/lib/crypto";
 import {
   listUserKeyStatus,
   type KeyProvider,
+  type KeyUser,
 } from "@/lib/user-keys";
 import type { ApiResult } from "@/types";
 
@@ -19,7 +20,7 @@ function isProvider(v: unknown): v is KeyProvider {
   return typeof v === "string" && (PROVIDERS as string[]).includes(v);
 }
 
-async function requireUserId(): Promise<string | NextResponse> {
+async function requireUser(): Promise<KeyUser | NextResponse> {
   const supabase = await supabaseServer();
   const {
     data: { user },
@@ -30,28 +31,27 @@ async function requireUserId(): Promise<string | NextResponse> {
       { status: 401 },
     );
   }
-  return user.id;
+  return { id: user.id, email: user.email };
 }
 
 export async function GET() {
-  const userIdOrResp = await requireUserId();
-  if (typeof userIdOrResp !== "string") return userIdOrResp;
+  const userOrResp = await requireUser();
+  if (userOrResp instanceof NextResponse) return userOrResp;
   try {
-    const status = await listUserKeyStatus(userIdOrResp);
+    const status = await listUserKeyStatus(userOrResp);
     return NextResponse.json({ success: true, data: status });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to load keys";
+  } catch {
     return NextResponse.json(
-      { success: false, error: message },
+      { success: false, error: "Failed to load keys" },
       { status: 500 },
     );
   }
 }
 
 export async function PUT(req: NextRequest) {
-  const userIdOrResp = await requireUserId();
-  if (typeof userIdOrResp !== "string") return userIdOrResp;
-  const userId = userIdOrResp;
+  const userOrResp = await requireUser();
+  if (userOrResp instanceof NextResponse) return userOrResp;
+  const userId = userOrResp.id;
 
   try {
     const body = (await req.json().catch(() => null)) as unknown;
@@ -91,13 +91,12 @@ export async function PUT(req: NextRequest) {
       },
       { onConflict: "user_id,provider" },
     );
-    if (error) throw new Error(error.message);
+    if (error) throw new Error("save failed");
 
     return NextResponse.json({ success: true, data: { provider, set: true } });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to save key";
+  } catch {
     return NextResponse.json(
-      { success: false, error: message },
+      { success: false, error: "Failed to save key" },
       { status: 500 },
     );
   }

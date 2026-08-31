@@ -8,6 +8,7 @@ import {
 } from "@/lib/gemini-errors";
 import { supabaseServer } from "@/lib/supabase/server";
 import { MissingKeyError, resolveUserKey } from "@/lib/user-keys";
+import { allowRequest } from "@/lib/rate-limit";
 
 const MAX_BYTES = 5 * 1024 * 1024;
 
@@ -73,6 +74,13 @@ export async function POST(
       );
     }
 
+    if (!allowRequest(`ai-parse:${user.id}`, 10, 60_000)) {
+      return NextResponse.json(
+        { success: false, error: "Too many requests" },
+        { status: 429 },
+      );
+    }
+
     const formData = await req.formData();
     const file = formData.get("file");
 
@@ -100,7 +108,7 @@ export async function POST(
     const buffer = Buffer.from(await file.arrayBuffer());
     const base64 = buffer.toString("base64");
 
-    const apiKey = await resolveUserKey(user.id, "gemini");
+    const apiKey = await resolveUserKey(user, "gemini");
     const ai = new GoogleGenAI({ apiKey });
 
     const markdown = await extractMarkdownFromPdf(ai, base64);

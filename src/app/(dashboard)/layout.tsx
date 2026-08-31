@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { SidebarNav } from "@/components/sidebar-nav";
+import { SiteFooter } from "@/components/site-footer";
 import { MigrateLocalStorage } from "@/components/migrate-local-storage";
 import { supabaseServer } from "@/lib/supabase/server";
 
@@ -22,7 +23,10 @@ export default async function DashboardLayout({
   return (
     <div className="flex min-h-screen w-full">
       <SidebarNav userEmail={user.email ?? null} />
-      <main className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</main>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <main className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</main>
+        <SiteFooter className="border-t md:hidden" />
+      </div>
       <MigrateLocalStorage userId={user.id} />
     </div>
   );

@@ -10,6 +10,7 @@ import {
   Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SiteFooter } from "@/components/site-footer";
 import { UserMenu } from "@/components/user-menu";
 
 const NAV = [
@@ -56,8 +57,9 @@ export function SidebarNav({ userEmail }: { userEmail: string | null }) {
           );
         })}
       </nav>
-      <div className="p-3 border-t">
+      <div className="space-y-2 border-t p-3">
         <UserMenu email={userEmail} />
+        <SiteFooter className="justify-start py-0" />
       </div>
     </aside>
   );

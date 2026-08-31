@@ -23,6 +23,5 @@ export function formatGeminiError(err: unknown): { message: string; status: numb
       status: 429,
     };
   }
-  const message = err instanceof Error ? err.message : "Request failed";
-  return { message, status: 500 };
+  return { message: "AI request failed", status: 500 };
 }

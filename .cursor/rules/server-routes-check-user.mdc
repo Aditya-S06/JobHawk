@@ -1,0 +1,23 @@
+---
+description: Server routes that read or write user data must check the session user
+globs: src/app/api/**/*.ts
+alwaysApply: false
+---
+
+# Server routes must check the user
+
+Every user-data Route Handler must call `supabase.auth.getUser()` (cookie client) **before** reads or writes.
+
+- Do not trust a client-supplied user id.
+- Scope queries to that user. Service-role (`supabaseAdmin`) bypasses RLS — use it only after `getUser()`, and only for that user’s rows (API keys).
+- Unauthenticated → `401`. Do not fall through to env owner keys without `getUser().email === OWNER_EMAIL`.
+
+```ts
+// ✅ GOOD
+const { data: { user } } = await supabase.auth.getUser();
+if (!user) return NextResponse.json({ success: false, error: "Not authenticated" }, { status: 401 });
+
+// ❌ BAD
+const { userId } = await req.json();
+await admin.from("resumes").select("*").eq("user_id", userId);
+```
